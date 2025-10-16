@@ -35,6 +35,7 @@
 #include <climits>
 #include <iomanip>
 #include <cassert>
+#include <atomic>
 
 namespace combblas {
 
@@ -845,13 +846,7 @@ Arr<IT,NT> SpDCCols<IT,NT>::GetArrays() const
 	return arr;
 }
 
-/**
-  * O(nnz log(nnz)) time Transpose function
-  * \remarks Performs a lexicographical sort
-  * \remarks Mutator function (replaces the calling object with its transpose)
-  */
-template <class IT, class NT>
-void SpDCCols<IT,NT>::Transpose()
+	template <class IT, class NT>void SpDCCols<IT,NT>::DeprecatedTranspose()
 {
 	if(nnz > 0)
 	{
@@ -867,19 +862,144 @@ void SpDCCols<IT,NT>::Transpose()
 	}
 }
 
-
 /**
   * O(nnz log(nnz)) time Transpose function
   * \remarks Performs a lexicographical sort
+  * \remarks Mutator function (replaces the calling object with its transpose)
+  */
+template <class IT, class NT>
+void SpDCCols<IT,NT>::Transpose()
+{
+	if(nnz > 0)
+	{
+		auto tmp = TransposeConst();
+		*this = tmp;
+	}
+	else
+	{
+		*this = SpDCCols<IT,NT>(0, n, m, 0);
+	}
+}
+
+
+/**
+  * Really fast shared-memory parallel Transpose function
+  * \remarks Uses atomics and bucket sort
   * \remarks Const function (doesn't mutate the calling object)
   */
 template <class IT, class NT>
 SpDCCols<IT,NT> SpDCCols<IT,NT>::TransposeConst() const
 {
-	SpTuples<IT,NT> Atuples(*this);
-	Atuples.SortRowBased();
+    std::atomic<int> * atomicColPtr = new std::atomic<int>[m];  // m is the number of rows, hence the new number of columns
+    for (IT i=0; i < m; i++)
+        atomicColPtr[i] = 0;
+    
+    Dcsc<IT, NT> * mydcsc = GetInternal();
+    IT mynzc = mydcsc->nzc;
 
-	return SpDCCols<IT,NT>(Atuples,true);
+    // construct an array of size nnz to record the relative
+    // position of a nonzero element in corresponding column
+    // this is what allows us to parallelize the last loop
+    IT * dloc = new IT[nnz]();  // also initialize to zero
+    
+#ifdef THREADED
+#pragma omp parallel for schedule(dynamic)
+#endif
+    for (IT i=0; i < mynzc; i++)
+    {
+        for(IT j=mydcsc->cp[i]; j < mydcsc->cp[i+1]; ++j)
+        {
+            IT rowid = mydcsc->ir[j];
+            
+            // we do two things here, one is to increment atomicColPtr[rowid],
+            // but second is to write the post incremented value to dloc so we can
+            // use them as exact indices later in the second loop
+            dloc[j] = std::atomic_fetch_add(&(atomicColPtr[rowid]), 1);
+        }
+    }
+        
+    IT * cscColPtr = new IT[m+1]; // pretend we are writing to CSC
+    cscColPtr[0] = 0;
+    for (IT i=0; i < m; i++)
+        cscColPtr[i+1] = static_cast<IT>(atomicColPtr[i]) + cscColPtr[i]; // prefix sum (parallelize?)
+    
+    IT maxnnzpercol = *std::max_element(atomicColPtr, atomicColPtr+m);
+    
+    delete [] atomicColPtr;
+    //std::copy( cscColPtr, cscColPtr+m+1, std::ostream_iterator<IT>( std::cout, " ")); std::cout << std::endl;
+    //std::copy( dloc, dloc+nnz, std::ostream_iterator<IT>( std::cout, " ")); std::cout << std::endl;
+
+    
+    IT * newrowindices = new IT[nnz];
+    NT * newvalues = new NT[nnz];
+#ifdef THREADED
+#pragma omp parallel for schedule(dynamic)
+#endif
+    for (IT i=0; i < mynzc; i++)
+    {
+        IT colid = mydcsc->jc[i];   // remember, i is not the column id because this is dcsc
+        for(IT j=mydcsc->cp[i]; j < mydcsc->cp[i+1]; ++j)
+        {
+            IT rowid = mydcsc->ir[j];
+            IT loc = cscColPtr[rowid] + dloc[j];
+            newrowindices[loc] = colid;
+            newvalues[loc] = mydcsc->numx[j];
+        }
+    }
+    
+    
+    int numThreads = 1;
+#ifdef THREADED
+#pragma omp parallel
+#endif
+    {
+        numThreads = omp_get_num_threads();
+    }
+    std::vector< std::vector< std::pair<IT,NT> > > workspaces(numThreads);
+#ifdef THREADED
+#pragma omp parallel
+    {
+        int myThread = omp_get_thread_num();
+        workspaces[myThread].reserve(maxnnzpercol); // max-per-column pre-transpose is max-per-row post transpose
+    }
+#else
+    {
+        workspaces[0].reserve(maxnnzpercol);
+    }
+#endif
+
+    // the issue with the above code is that row indices within a column might not be sorted (depending on parallelism)
+    // not we need to fix that as some downstream DCSC applications might ask for it (ABAB: does it?)
+#ifdef THREADED
+#pragma omp parallel for schedule(dynamic)
+#endif
+    for (IT i=0; i<m; ++i)
+    {
+        int tid = omp_get_thread_num();
+        for(IT j=cscColPtr[i]; j<cscColPtr[i+1]; ++j)
+        {
+            workspaces[tid].emplace_back(std::make_pair(newrowindices[j], newvalues[j]));
+        }
+    	// we only need to compare row id and should avoid compare the NT
+    	// because it's possible that NT compare function is not defined (e.g. in SpAsgnTest)
+        std::sort(workspaces[tid].begin(), workspaces[tid].end(),
+        	[](std::pair<IT,NT> &a,std::pair<IT,NT> &b){return a.first < b.first;});
+        size_t index = 0;
+        for(IT j=cscColPtr[i]; j<cscColPtr[i+1]; ++j)
+        {
+            newrowindices[j] =  workspaces[tid][index].first;
+            newvalues[j] = workspaces[tid][index].second;
+            index++;
+        }
+
+        workspaces[tid].clear();    // After this call, size() returns zero. Calling clear() does not affect the result of capacity().
+    }
+    
+    delete[] dloc;
+
+    
+    Dcsc<IT, NT> * newDcsc = new Dcsc<IT, NT>(cscColPtr, newrowindices, newvalues, m, nnz); // m is the new #columns
+    return SpDCCols<IT,NT>(n, m, newDcsc);
 }
 
 /**
@@ -890,10 +1010,8 @@ SpDCCols<IT,NT> SpDCCols<IT,NT>::TransposeConst() const
 template <class IT, class NT>
 SpDCCols<IT,NT> * SpDCCols<IT,NT>::TransposeConstPtr() const
 {
-	SpTuples<IT,NT> Atuples(*this);
-	Atuples.SortRowBased();
-	
-	return new SpDCCols<IT,NT>(Atuples,true);
+	auto tmp = TransposeConst();
+	return new SpDCCols<IT,NT>(tmp);
 }
 
 /** 
@@ -1205,7 +1323,12 @@ void SpDCCols<IT,NT>::Merge(SpDCCols<IT,NT> & partA, SpDCCols<IT,NT> & partB)
 	else if(partA.nnz == 0)
 	{
 		Cdcsc = new Dcsc<IT,NT>(*(partB.dcsc));
-    std::transform(Cdcsc->jc, Cdcsc->jc + Cdcsc->nzc, Cdcsc->jc, std::bind2nd(std::plus<IT>(), partA.n));
+		{
+			IT partAn = partA.n;
+			std::transform(Cdcsc->jc, Cdcsc->jc + Cdcsc->nzc, Cdcsc->jc,
+				[partAn](IT val){return val + partAn;});
+		}
+
 	}
 	else if(partB.nnz == 0)
 	{

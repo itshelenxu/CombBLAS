@@ -193,7 +193,8 @@ void MCLPruneRecoverySelect(SpParMat<IT,NT,DER> & A, NT hardThreshold, IT select
 #endif
     
     // Prune and create a new pruned matrix
-    SpParMat<IT,NT,DER> PrunedA = A.Prune(std::bind2nd(std::less_equal<NT>(), hardThreshold), false);
+    SpParMat<IT,NT,DER> PrunedA = A.Prune([hardThreshold](NT val){ return val <= hardThreshold; }, false);
+
     // column-wise statistics of the pruned matrix
     FullyDistVec<IT,NT> colSums = PrunedA.Reduce(Column, std::plus<NT>(), 0.0);
     FullyDistVec<IT,NT> nnzPerColumnUnpruned = A.Reduce(Column, std::plus<NT>(), 0.0, [](NT val){return 1.0;});
@@ -204,7 +205,7 @@ void MCLPruneRecoverySelect(SpParMat<IT,NT,DER> & A, NT hardThreshold, IT select
 
     PrunedA.FreeMemory();
 
-    FullyDistSpVec<IT,NT> recoverCols(nnzPerColumn, std::bind2nd(std::less<NT>(), recoverNum));
+	FullyDistSpVec<IT,NT> recoverCols(nnzPerColumn, [recoverNum](const NT& val) { return val < recoverNum; });
     
     // recover only when nnzs in unprunned columns are greater than nnzs in pruned column
     recoverCols = EWiseApply<NT>(recoverCols, nnzPerColumnUnpruned,
@@ -212,7 +213,7 @@ void MCLPruneRecoverySelect(SpParMat<IT,NT,DER> & A, NT hardThreshold, IT select
                                  [](NT spval, NT dval){return dval > spval;},
                                  false, NT());
 
-    
+
     recoverCols = recoverPct;
     // columns with nnz < r AND sum < recoverPct (pct)
     recoverCols = EWiseApply<NT>(recoverCols, colSums,
@@ -344,7 +345,7 @@ void MCLPruneRecoverySelect(SpParMat<IT,NT,DER> & A, NT hardThreshold, IT select
     if(recoverNum<=0 ) // if recoverNum>0, recovery would have added nonzeros in empty columns
     {
         FullyDistVec<IT,NT> nnzPerColumnA = A.Reduce(Column, std::plus<NT>(), 0.0, [](NT val){return 1.0;});
-        FullyDistSpVec<IT,NT> emptyColumns(nnzPerColumnA, std::bind2nd(std::equal_to<NT>(), 0.0));
+        FullyDistSpVec<IT,NT> emptyColumns(nnzPerColumnA, [](NT val){return val == 0.0;});
         emptyColumns = 1.00;
         //Ariful: We need a selective AddLoops function with a sparse vector
         //A.AddLoops(emptyColumns);
@@ -781,10 +782,6 @@ int CalculateNumberOfPhases (SpParMat<IU,NU1,UDERA> & A, SpParMat<IU,NU2,UDERB> 
     
     int phases;
 
-    typedef typename UDERA::LocalIT LIA;
-    typedef typename UDERB::LocalIT LIB;
-    typedef typename UDERO::LocalIT LIC;
-    
     int myrank;
     MPI_Comm_rank(MPI_COMM_WORLD,&myrank);
     
@@ -875,14 +872,15 @@ SpParMat<ITA, NTA, DERA> IncrementalMCLSquare(SpParMat<ITA, NTA, DERA> & A,
 
         SpParMat<ITA, NTA, DERA> AD(A);
         AD.DimApply(Column, diag, [](NTA mv, NTA vv){return mv * vv;});
-        AD.Prune(std::bind2nd(std::less_equal<NTA>(), 1e-8), true);
+    	AD.Prune([](NTA val) { return val <= 1e-8; }, true);
 
         SpParMat<ITA, NTA, DERA> DA(A);
         DA.DimApply(Row, diag, [](NTA mv, NTA vv){return mv * vv;});
-        DA.Prune(std::bind2nd(std::less_equal<NTA>(), 1e-8), true);
+
+    	DA.Prune([](NTA val) { return val <= 1e-8; }, true);
 
         X = D;
-        X.Apply(bind2nd(exponentiate(), 2));
+    	X.Apply([](auto val) { return std::pow(val, 2); });
 
         X += DA;
         X += AD;
@@ -1247,11 +1245,11 @@ SpParMat<IU,NUO,UDERO> Mult_AnXBn_DoubleBuff
 		return SpParMat< IU,NUO,UDERO >();
 	}
 	typedef typename UDERA::LocalIT LIA;
-    	typedef typename UDERB::LocalIT LIB;
+	typedef typename UDERB::LocalIT LIB;
 	typedef typename UDERO::LocalIT LIC;
 
 	static_assert(std::is_same<LIA, LIB>::value, "local index types for both input matrices should be the same");
-    	static_assert(std::is_same<LIA, LIC>::value, "local index types for input and output matrices should be the same");
+	static_assert(std::is_same<LIA, LIC>::value, "local index types for input and output matrices should be the same");
 
 	int stages, dummy; 	// last two parameters of ProductGrid are ignored for Synch multiplication
 	std::shared_ptr<CommGrid> GridC = ProductGrid((A.commGrid).get(), (B.commGrid).get(), stages, dummy, dummy);
@@ -1266,10 +1264,10 @@ SpParMat<IU,NUO,UDERO> Mult_AnXBn_DoubleBuff
 	const_cast< UDERB* >(B.spSeq)->Transpose();
 	(B.spSeq)->Split( *B1seq, *B2seq);
     
-    	// Transpose back for the column-by-column algorithm
-    	const_cast< UDERB* >(B1seq)->Transpose();
-    	const_cast< UDERB* >(B2seq)->Transpose();
-    
+    // Transpose back for the column-by-column algorithm
+    const_cast< UDERB* >(B1seq)->Transpose();
+    const_cast< UDERB* >(B2seq)->Transpose();
+
 	LIA ** ARecvSizes = SpHelper::allocate2D<LIA>(UDERA::esscount, stages);
 	LIB ** BRecvSizes = SpHelper::allocate2D<LIB>(UDERB::esscount, stages);
 
@@ -1319,11 +1317,16 @@ SpParMat<IU,NUO,UDERO> Mult_AnXBn_DoubleBuff
 		
 		// before activating this remove transposing B1seq
             
-        SpTuples<LIC,NUO> * C_cont = MultiplyReturnTuples<SR, NUO>
-                        (*ARecv, *BRecv,  //parameters themselves
-                        false, true,	 //transpose information (B is transposed)
-                        false, 	 //'delete A' condition
-                        false);	 // 'delete B' condition
+        //SpTuples<LIC,NUO> * C_cont = MultiplyReturnTuples<SR, NUO>
+                        //(*ARecv, *BRecv,  //parameters themselves
+                        //false, true,	 //transpose information (B is transposed)
+                        //false, 	 //'delete A' condition
+                        //false);	 // 'delete B' condition
+        
+		SpTuples<LIC,NUO> * C_cont = LocalHybridSpGEMM<SR, NUO>
+			(*ARecv, *BRecv, // parameters themselves
+			false,    // 'delete A' condition
+			false);   // 'delete B' condition
         
         if(i != Bself && (!BRecv->isZero())) delete BRecv;
         if(i != Aself && (!ARecv->isZero())) delete ARecv;
@@ -1380,11 +1383,17 @@ SpParMat<IU,NUO,UDERO> Mult_AnXBn_DoubleBuff
 
         	// before activating this remove transposing B2seq
             
-        SpTuples<LIC,NUO> * C_cont = MultiplyReturnTuples<SR, NUO>
-                        (*ARecv, *BRecv,  //parameters themselves
-                        false, true,	 //transpose information (B is transposed)
-                        false, 	 //'delete A' condition
-                        false);	 //'delete B' condition
+        //SpTuples<LIC,NUO> * C_cont = MultiplyReturnTuples<SR, NUO>
+                        //(*ARecv, *BRecv,  //parameters themselves
+                        //false, true,	 //transpose information (B is transposed)
+                        //false, 	 //'delete A' condition
+                        //false);	 //'delete B' condition
+        
+		SpTuples<LIC,NUO> * C_cont = LocalHybridSpGEMM<SR, NUO>
+			(*ARecv, *BRecv, // parameters themselves
+			false,    // 'delete A' condition
+			false);   // 'delete B' condition
+
 
         if(i != Bself && (!BRecv->isZero())) delete BRecv;
         if(i != Aself && (!ARecv->isZero())) delete ARecv;
@@ -1704,8 +1713,8 @@ SpParMat<IU, NUO, UDERO> Mult_AnXBn_Overlap
 		B.spSeq = NULL;
 	}
 
-    delete ARecv;
-    delete BRecv;
+    delete[] ARecv;
+    delete[] BRecv;
 
 	SpHelper::deallocate2D(ARecvSizes, UDERA::esscount);
 	SpHelper::deallocate2D(BRecvSizes, UDERB::esscount);
@@ -1903,8 +1912,8 @@ void TransposeVector(MPI_Comm & World, const FullyDistSpVec<IU,NV> & x, int32_t 
 		trxnums = new NV[trxlocnz];
 		MPI_Sendrecv(const_cast<NV*>(SpHelper::p2a(x.num)), xlocnz, MPIType<NV>(), diagneigh, TRX, trxnums, trxlocnz, MPIType<NV>(), diagneigh, TRX, World, &status);
 	}
-    
-  std::transform(trxinds, trxinds+trxlocnz, trxinds, std::bind2nd(std::plus<int32_t>(), roffset)); // fullydist indexing (p pieces) -> matrix indexing (sqrt(p) pieces)
+	// fullydist indexing (p pieces) -> matrix indexing (sqrt(p) pieces)
+	std::transform(trxinds, trxinds+trxlocnz, trxinds, [roffset](int32_t  val){return val + roffset;});
 }
 
 
@@ -2515,9 +2524,10 @@ FullyDistSpVec<IU,typename promote_trait<NUM,NUV>::T_promote>  SpMV
 	NUV * trxnums = new NUV[trxlocnz];
 	MPI_Sendrecv(const_cast<IU*>(SpHelper::p2a(x.ind)), xlocnz, MPIType<IU>(), diagneigh, TRX, trxinds, trxlocnz, MPIType<IU>(), diagneigh, TRX, World, &status);
 	MPI_Sendrecv(const_cast<NUV*>(SpHelper::p2a(x.num)), xlocnz, MPIType<NUV>(), diagneigh, TRX, trxnums, trxlocnz, MPIType<NUV>(), diagneigh, TRX, World, &status);
-  std::transform(trxinds, trxinds+trxlocnz, trxinds, std::bind2nd(std::plus<IU>(), offset)); // fullydist indexing (n pieces) -> matrix indexing (sqrt(p) pieces)
+	// fullydist indexing (n pieces) -> matrix indexing (sqrt(p) pieces)
+	std::transform(trxinds, trxinds+trxlocnz, trxinds, [offset](IU val){return val + offset;});
 
-        int colneighs, colrank;
+	int colneighs, colrank;
 	MPI_Comm_size(ColWorld, &colneighs);
 	MPI_Comm_rank(ColWorld, &colrank);
 	int * colnz = new int[colneighs];

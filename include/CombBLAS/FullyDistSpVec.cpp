@@ -1209,7 +1209,6 @@ template <typename _BinaryOperation>
 void FullyDistSpVec<IT,NT>::ParallelRead (const std::string & filename, bool onebased, _BinaryOperation BinOp)
 {
     int64_t gnnz;	// global nonzeros (glen is already declared as part of this class's private data)
-    int64_t linesread = 0;
 
     FILE *f;
     int myrank = commGrid->GetRank();
@@ -1223,7 +1222,7 @@ void FullyDistSpVec<IT,NT>::ParallelRead (const std::string & filename, bool one
 	}
 	else
 	{
-		fscanf(f,"%lld %lld\n", &glen, &gnnz);
+		fscanf(f,"%ld %ld\n", &glen, &gnnz);
 	}
         std::cout << "Total number of nonzeros expected across all processors is " << gnnz << std::endl;
 

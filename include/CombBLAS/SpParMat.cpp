@@ -1894,7 +1894,9 @@ void SpParMat<IT,NT,DER>::MaskedReduce(FullyDistVec<GIT,VT> & rvec, FullyDistSpV
     std::partial_sum(rownz.begin(), rownz.end(), dpls.data()+1);
     int accnz = std::accumulate(rownz.begin(), rownz.end(), 0);
     std::vector<GIT> sendInd(locnnzMask);
-    std::transform(mask.ind.begin(), mask.ind.end(),sendInd.begin(), bind2nd(std::plus<GIT>(), mask.RowLenUntil()));
+    auto rowlenuntil = mask.RowLenUntil();
+	std::transform(mask.ind.begin(), mask.ind.end(), sendInd.begin(),
+			   [rowlenuntil](const GIT& val) { return val + rowlenuntil; });
     
     std::vector<GIT> indMask(accnz);
     MPI_Allgatherv(sendInd.data(), rownz[rowrank], MPIType<GIT>(), indMask.data(), rownz.data(), dpls.data(), MPIType<GIT>(), RowWorld);
@@ -2114,14 +2116,14 @@ SpParMat<IT,NT,DER> SpParMat<IT,NT,DER>::SubsRef_SR (const FullyDistVec<IT,IT> &
   	IT * senddata = new IT[locvec];	// re-used for both rows and columns
 	for(int i=0; i<rowneighs; ++i)
 	{
-    		std::copy(rowid[i].begin(), rowid[i].end(), senddata+sdispls[i]);
+		std::copy(rowid[i].begin(), rowid[i].end(), senddata+sdispls[i]);
 		std::vector<IT>().swap(rowid[i]);	// clear memory of rowid
 	}
 	MPI_Alltoallv(senddata, sendcnt, sdispls, MPIType<IT>(), p_rows, recvcnt, rdispls, MPIType<IT>(), commGrid->GetRowWorld());
 
 	for(int i=0; i<rowneighs; ++i)
 	{
-    		std::copy(colid[i].begin(), colid[i].end(), senddata+sdispls[i]);
+		std::copy(colid[i].begin(), colid[i].end(), senddata+sdispls[i]);
 		std::vector<IT>().swap(colid[i]);	// clear memory of colid
 	}
 	MPI_Alltoallv(senddata, sendcnt, sdispls, MPIType<IT>(), p_cols, recvcnt, rdispls, MPIType<IT>(), commGrid->GetRowWorld());
@@ -2150,8 +2152,8 @@ SpParMat<IT,NT,DER> SpParMat<IT,NT,DER>::SubsRef_SR (const FullyDistVec<IT,IT> &
 			#ifdef SPREFDEBUG	
 			SpParHelper::Print("In place multiplication\n", commGrid->GetWorld());
 			#endif
-                //*this = Mult_AnXBn_DoubleBuff<PTBOOLNT, NT, DER>(P, *this, false, true);	// clear the memory of *this
-        		*this = Mult_AnXBn_Synch<PTBOOLNT, NT, DER>(P, *this, false, true);	// clear the memory of *this
+                *this = Mult_AnXBn_DoubleBuff<PTBOOLNT, NT, DER>(P, *this, false, true);	// clear the memory of *this
+                //*this = Mult_AnXBn_Synch<PTBOOLNT, NT, DER>(P, *this, false, true);	// clear the memory of *this
 
 			//ostringstream outb;
 			//outb << "P_after_" << commGrid->myrank;
@@ -2159,17 +2161,17 @@ SpParMat<IT,NT,DER> SpParMat<IT,NT,DER>::SubsRef_SR (const FullyDistVec<IT,IT> &
 			//P.put(ofb);
 
 			P.Transpose();	
-                    //*this = Mult_AnXBn_DoubleBuff<PTNTBOOL, NT, DER>(*this, P, true, true);	// clear the memory of both *this and P
-       	 		*this = Mult_AnXBn_Synch<PTNTBOOL, NT, DER>(*this, P, true, true);	// clear the memory of both *this and P
+                    *this = Mult_AnXBn_DoubleBuff<PTNTBOOL, NT, DER>(*this, P, true, true);	// clear the memory of both *this and P
+                    //*this = Mult_AnXBn_Synch<PTNTBOOL, NT, DER>(*this, P, true, true);	// clear the memory of both *this and P
 			return SpParMat<IT,NT,DER>(commGrid);	// dummy return to match signature
 		}
 		else
 		{
-			//PA = Mult_AnXBn_DoubleBuff<PTBOOLNT, NT, DER>(P,*this);
-			PA = Mult_AnXBn_Synch<PTBOOLNT, NT, DER>(P,*this);
+            PA = Mult_AnXBn_DoubleBuff<PTBOOLNT, NT, DER>(P,*this);
+			//PA = Mult_AnXBn_Synch<PTBOOLNT, NT, DER>(P,*this);
 			P.Transpose();
-			//return Mult_AnXBn_DoubleBuff<PTNTBOOL, NT, DER>(PA, P);
-			return Mult_AnXBn_Synch<PTNTBOOL, NT, DER>(PA, P);
+            return Mult_AnXBn_DoubleBuff<PTNTBOOL, NT, DER>(PA, P);
+			//return Mult_AnXBn_Synch<PTNTBOOL, NT, DER>(PA, P);
 		}
 	}
 	else
@@ -2179,8 +2181,8 @@ SpParMat<IT,NT,DER> SpParMat<IT,NT,DER>::SubsRef_SR (const FullyDistVec<IT,IT> &
 		SpParMat<IT,bool,DER_IT> P (PSeq, commGrid);
 
 		// Do parallel matrix-matrix multiply
-            //PA = Mult_AnXBn_DoubleBuff<PTBOOLNT, NT, DER>(P, *this);
-            PA = Mult_AnXBn_Synch<PTBOOLNT, NT, DER>(P, *this);
+            PA = Mult_AnXBn_DoubleBuff<PTBOOLNT, NT, DER>(P, *this);
+            //PA = Mult_AnXBn_Synch<PTBOOLNT, NT, DER>(P, *this);
 	}	// P is destructed here
 #ifndef NDEBUG
 	PA.PrintInfo();
@@ -2214,14 +2216,14 @@ SpParMat<IT,NT,DER> SpParMat<IT,NT,DER>::SubsRef_SR (const FullyDistVec<IT,IT> &
   	senddata = new IT[locvec];	
 	for(int i=0; i<rowneighs; ++i)
 	{
-    		std::copy(rowid[i].begin(), rowid[i].end(), senddata+sdispls[i]);
+		std::copy(rowid[i].begin(), rowid[i].end(), senddata+sdispls[i]);
 		std::vector<IT>().swap(rowid[i]);	// clear memory of rowid
 	}
 	MPI_Alltoallv(senddata, sendcnt, sdispls, MPIType<IT>(), q_rows, recvcnt, rdispls, MPIType<IT>(), commGrid->GetRowWorld());
 
 	for(int i=0; i<rowneighs; ++i)
 	{
-    		std::copy(colid[i].begin(), colid[i].end(), senddata+sdispls[i]);
+		std::copy(colid[i].begin(), colid[i].end(), senddata+sdispls[i]);
 		std::vector<IT>().swap(colid[i]);	// clear memory of colid
 	}
 	MPI_Alltoallv(senddata, sendcnt, sdispls, MPIType<IT>(), q_cols, recvcnt, rdispls, MPIType<IT>(), commGrid->GetRowWorld());
@@ -2509,10 +2511,12 @@ void SpParMat<IT,NT,DER>::Prune(const FullyDistVec<IT,IT> & ri, const FullyDistV
 
 	// create and downcast to boolean because this type of constructor can not be booleand as FullyDist can not be boolean
 	SpParMat<IT,bool,DER_BOOL> S = SpParMat<IT, IT, DER_IT> (total_m, total_m, ri, ri, 1);
-	SpParMat<IT,NT,DER> SA = Mult_AnXBn_DoubleBuff< BoolCopy2ndSRing<NT> , NT, DER>(S, *this, true, false); // clear memory of S but not *this
+	// clear memory of S but not *this
+	SpParMat<IT,NT,DER> SA = Mult_AnXBn_DoubleBuff< BoolCopy2ndSRing<NT> , NT, DER>(S, *this, true, false);
 
 	SpParMat<IT,bool,DER_BOOL> T = SpParMat<IT, IT, DER_IT> (total_n, total_n, ci, ci, 1);
-	SpParMat<IT,NT,DER> SAT = Mult_AnXBn_DoubleBuff< BoolCopy1stSRing<NT> , NT, DER>(SA, T, true, true); // clear memory of SA and T
+	// clear memory of SA and T
+	SpParMat<IT,NT,DER> SAT = Mult_AnXBn_DoubleBuff< BoolCopy1stSRing<NT> , NT, DER>(SA, T, true, true);
 
 
 	// the type of the SAT matrix does not matter when calling set difference
@@ -2688,7 +2692,8 @@ void SpParMat<IT,NT,DER>::PruneColumnByIndex(const FullyDistSpVec<IT,IRRELEVANT_
 
     MPI_Sendrecv(ci.ind.data(), xlocnz, MPIType<IT>(), diagneigh, TRI, trxinds.data(), trxlocnz, MPIType<IT>(), diagneigh, TRI, World, MPI_STATUS_IGNORE);
 
-    std::transform(trxinds.data(), trxinds.data() + trxlocnz, trxinds.data(), std::bind2nd(std::plus<IT>(), trxrofst));
+    std::transform(trxinds.data(), trxinds.data() + trxlocnz, trxinds.data(),
+    	[trxrofst](IT val){return val + trxrofst;});
 
     int colneighs, colrank;
     MPI_Comm_size(ColWorld, &colneighs);
@@ -2749,7 +2754,8 @@ SpParMat<IT,NT,DER> SpParMat<IT,NT,DER>::PruneColumn(const FullyDistSpVec<IT,NT>
     std::vector<NT> trxnums (trxlocnz);
     MPI_Sendrecv(pvals.ind.data(), xlocnz, MPIType<IT>(), diagneigh, TRI, trxinds.data(), trxlocnz, MPIType<IT>(), diagneigh, TRI, World, &status);
     MPI_Sendrecv(pvals.num.data(), xlocnz, MPIType<NT>(), diagneigh, TRX, trxnums.data(), trxlocnz, MPIType<NT>(), diagneigh, TRX, World, &status);
-    std::transform(trxinds.data(), trxinds.data()+trxlocnz, trxinds.data(), std::bind2nd(std::plus<IT>(), roffset));
+    std::transform(trxinds.data(), trxinds.data()+trxlocnz, trxinds.data(),
+    	[roffset](IT val){return val + roffset;});
     
     int colneighs, colrank;
     MPI_Comm_size(ColWorld, &colneighs);
