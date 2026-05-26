@@ -14,20 +14,19 @@
 #SBATCH -o slurm.prep-data.o%j
 
 SYSTEM=perlmutter_cpu
-N_NODE=1
-PROC_PER_NODE=1
+N_NODE=8
+PROC_PER_NODE=8
 N_PROC=$(( $N_NODE * $PROC_PER_NODE ))
 THREAD_PER_PROC=8
 export OMP_NUM_THREADS=$THREAD_PER_PROC
 
-DATA_NAME=geom-150
-#IN_FILE=$CFS/m1982/HipMCL/viruses/Renamed_vir_vs_vir_30_50length.indexed.mtx
-IN_FILE=$CFS/geom-150/geom-150.mtx
-#OUT_PREFIX=$CFS/m1982/taufique/virus-incremental/10-split/vir_30_50_length
-N_SPLIT=10
-OUT_PREFIX=$CFS/geom-150-incremental/$N_SPLIT-split/geom-150
+DATA_NAME=eukarya
+#IN_FILE=$CFS/m1982/HipMCL/eukarya/Renamed_euk_vs_euk_30_50length.indexed.mtx
+IN_FILE=$CFS/m1982/HipMCL/eukarya/euk_vs_euk_30_50length.indexed.triples
+N_SPLIT=20
+OUT_PREFIX=$CFS/m4293/taufique/imcl/matrices/eukarya_incremental/$N_SPLIT-split/eukarya_30_50_length
 START_SPLIT=0
-END_SPLIT=10
+END_SPLIT=20
 
 #DATA_NAME=virus
 #IN_FILE=$CFS/m1982/HipMCL/viruses/Renamed_vir_vs_vir_30_50length.indexed.mtx
@@ -72,10 +71,10 @@ END_SPLIT=10
 #END_SPLIT=50
 
 BINARY=$HOME/Codes/CombBLAS/_build/Applications/Incremental/prep-data
-#srun -N $N_NODE -n $N_PROC -c $THREAD_PER_PROC --ntasks-per-node=$PROC_PER_NODE --cpu-bind=cores \
+#mpirun -n $N_PROC \
 #    $BINARY -I mm -M $IN_FILE -out-prefix $OUT_PREFIX \
 #    -num-split $N_SPLIT -split-start $START_SPLIT -split-end $END_SPLIT
 
-mpirun -n $N_PROC \
-    $BINARY -I mm -M $IN_FILE -out-prefix $OUT_PREFIX \
+srun -N $N_NODE -n $N_PROC -c $THREAD_PER_PROC --ntasks-per-node=$PROC_PER_NODE --cpu-bind=cores \
+    $BINARY -I triples -M $IN_FILE -out-prefix $OUT_PREFIX \
     -num-split $N_SPLIT -split-start $START_SPLIT -split-end $END_SPLIT

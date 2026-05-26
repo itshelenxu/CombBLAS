@@ -1322,12 +1322,12 @@ SpParMat<IU,NUO,UDERO> Mult_AnXBn_DoubleBuff
                         //false, true,	 //transpose information (B is transposed)
                         //false, 	 //'delete A' condition
                         //false);	 // 'delete B' condition
-        
+
 		SpTuples<LIC,NUO> * C_cont = LocalHybridSpGEMM<SR, NUO>
 			(*ARecv, *BRecv, // parameters themselves
 			false,    // 'delete A' condition
 			false);   // 'delete B' condition
-        
+
         if(i != Bself && (!BRecv->isZero())) delete BRecv;
         if(i != Aself && (!ARecv->isZero())) delete ARecv;
         
@@ -1382,13 +1382,13 @@ SpParMat<IU,NUO,UDERO> Mult_AnXBn_DoubleBuff
 		SpParHelper::BCastMatrix(GridC->GetColWorld(), *BRecv, ess, i);	// then, receive its elements
 
         	// before activating this remove transposing B2seq
-            
+
         //SpTuples<LIC,NUO> * C_cont = MultiplyReturnTuples<SR, NUO>
                         //(*ARecv, *BRecv,  //parameters themselves
                         //false, true,	 //transpose information (B is transposed)
                         //false, 	 //'delete A' condition
                         //false);	 //'delete B' condition
-        
+
 		SpTuples<LIC,NUO> * C_cont = LocalHybridSpGEMM<SR, NUO>
 			(*ARecv, *BRecv, // parameters themselves
 			false,    // 'delete A' condition
@@ -3413,7 +3413,6 @@ EstPerProcessNnzSpMV(
 	return nnzC_tot;
 	
 }
-
 template <typename SR, typename NUO, typename UDERO, typename IU, typename NU1, typename NU2, typename UDER1, typename UDER2>
 SpParMat3D<IU,NUO,UDERO> Mult_AnXBn_SUMMA3D(SpParMat3D<IU,NU1,UDER1> & A, SpParMat3D<IU,NU2,UDER2> & B){
     int myrank;
@@ -3424,7 +3423,6 @@ SpParMat3D<IU,NUO,UDERO> Mult_AnXBn_SUMMA3D(SpParMat3D<IU,NU1,UDER1> & A, SpParM
 
 #ifdef TIMING
     double t0, t1, t2, t3;
-    t0 = MPI_Wtime();
 #endif
 
     /* 
@@ -3445,15 +3443,6 @@ SpParMat3D<IU,NUO,UDERO> Mult_AnXBn_SUMMA3D(SpParMat3D<IU,NU1,UDER1> & A, SpParM
     // Calcuclate split boundaries as if all contents of the layer is being re-distributed along fiber
     // These boundaries will be used later on
     B.CalculateColSplitDistributionOfLayer(divisions3d); 
-#ifdef TIMING
-    t1 = MPI_Wtime();
-    double preproc_time = t1-t0;
-    double max_SUMMA = 0;
-    double min_SUMMA = 0;
-    MPI_Allreduce(&SUMMA_time, &max_SUMMA, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-    MPI_Allreduce(&SUMMA_time, &min_SUMMA, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
-    if(myrank == 0) fprintf(stdout, "[SUMMA3D]\tSUMMA time: %lf\n", max_SUMMA);
-#endif
 
 #ifdef TIMING
     t0 = MPI_Wtime();
@@ -3486,7 +3475,6 @@ SpParMat3D<IU,NUO,UDERO> Mult_AnXBn_SUMMA3D(SpParMat3D<IU,NU1,UDER1> & A, SpParM
     double Abcast_time = 0;
     double Bbcast_time = 0;
     double Local_multiplication_time = 0;
-    double Merge_layer_time = 0;
     
     for(int i = 0; i < stages; ++i) {
         std::vector<LIA> ess;
@@ -3561,7 +3549,7 @@ SpParMat3D<IU,NUO,UDERO> Mult_AnXBn_SUMMA3D(SpParMat3D<IU,NU1,UDER1> & A, SpParM
                             false,         // 'delete A' condition
                             false,         // 'delete B' condition
                             false);             // not to sort each column
-        // delete received copies of A and B explicitly
+
         if(i != Bself && (!BRecv->isZero())) delete BRecv;
         if(i != Aself && (!ARecv->isZero())) delete ARecv;
 #ifdef TIMING
@@ -3583,35 +3571,14 @@ SpParMat3D<IU,NUO,UDERO> Mult_AnXBn_SUMMA3D(SpParMat3D<IU,NU1,UDER1> & A, SpParM
     //SpTuples<LIC,NUO> * C_tuples = MultiwayMergeHashSliding<SR>(tomerge, C_m, C_n, true, false); // Delete input arrays and do not sort
 #ifdef TIMING
     t3 = MPI_Wtime();
-    Merge_layer_time = (t3-t2);
 #endif
 
 #ifdef TIMING 
-
-    double min_Abcast = 0;
-    double min_Bbcast = 0;
-    double min_Local_multiplication = 0;
-    double min_Merge_layer = 0;
-    double max_Abcast = 0;
-    double max_Bbcast = 0;
-    double max_Local_multiplication = 0;
-    double max_Merge_layer = 0;
-
-    MPI_Allreduce(&Abcast_time, &min_Abcast, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
-    MPI_Allreduce(&Bbcast_time, &min_Bbcast, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
-    MPI_Allreduce(&Local_multiplication_time, &min_Local_multiplication, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
-    MPI_Allreduce(&Merge_layer_time, &min_Merge_layer, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
-
-    MPI_Allreduce(&Abcast_time, &max_Abcast, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-    MPI_Allreduce(&Bbcast_time, &max_Bbcast, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-    MPI_Allreduce(&Local_multiplication_time, &max_Local_multiplication, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-    MPI_Allreduce(&Merge_layer_time, &max_Merge_layer, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-
     if(myrank == 0){
-        fprintf(stdout, "[SUMMA3D]\tAbcast_time: %lf\n", max_Abcast);
-        fprintf(stdout, "[SUMMA3D]\tBbcast_time: %lf\n", max_Bbcast);
-        fprintf(stdout, "[SUMMA3D]\tLocal_multiplication_time: %lf\n", max_Local_multiplication);
-        fprintf(stdout, "[SUMMA3D]\tMerge_layer_time: %lf\n", max_Merge_layer);
+        fprintf(stderr, "[SUMMA3D]\tAbcast_time: %lf\n", Abcast_time);
+        fprintf(stderr, "[SUMMA3D]\tBbcast_time: %lf\n", Bbcast_time);
+        fprintf(stderr, "[SUMMA3D]\tLocal_multiplication_time: %lf\n", Local_multiplication_time);
+        fprintf(stderr, "[SUMMA3D]\tMerge_layer_time: %lf\n", (t3-t2));
     }
 #endif
     /*
@@ -3619,12 +3586,7 @@ SpParMat3D<IU,NUO,UDERO> Mult_AnXBn_SUMMA3D(SpParMat3D<IU,NU1,UDER1> & A, SpParM
      * */
 #ifdef TIMING
     t1 = MPI_Wtime();
-    double SUMMA_time = t1-t0;
-    double max_SUMMA = 0;
-    double min_SUMMA = 0;
-    MPI_Allreduce(&SUMMA_time, &max_SUMMA, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-    MPI_Allreduce(&SUMMA_time, &min_SUMMA, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
-    if(myrank == 0) fprintf(stdout, "[SUMMA3D]\tSUMMA time: %lf\n", max_SUMMA);
+    if(myrank == 0) fprintf(stderr, "[SUMMA3D]\tSUMMA time: %lf\n", (t1-t0));
 #endif
     /*
      * 3d-reduction starts
@@ -3693,7 +3655,7 @@ SpParMat3D<IU,NUO,UDERO> Mult_AnXBn_SUMMA3D(SpParMat3D<IU,NU1,UDER1> & A, SpParM
     delete C_tuples;
 #ifdef TIMING
     t3 = MPI_Wtime();
-    if(myrank == 0) fprintf(stdout, "[SUMMA3D]\tAlltoallv: %lf\n", (t3-t2));
+    if(myrank == 0) fprintf(stderr, "[SUMMA3D]\tAlltoallv: %lf\n", (t3-t2));
 #endif
     vector<SpTuples<LIC, NUO>*> recvChunks(A.getcommgrid3D()->GetGridLayers());
 #pragma omp parallel for
@@ -3711,13 +3673,7 @@ SpParMat3D<IU,NUO,UDERO> Mult_AnXBn_SUMMA3D(SpParMat3D<IU,NU1,UDER1> & A, SpParM
     
 #ifdef TIMING
     t1 = MPI_Wtime();
-    double Fiber_reduction_time=(t1-t0);
-    double min_Fiber_reduction;
-    double max_Fiber_reduction;
-    MPI_Allreduce(&Fiber_reduction_time, &max_Fiber_reduction, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-    MPI_Allreduce(&Fiber_reduction_time, &min_Fiber_reduction, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
-    if(myrank == 0) fprintf(stdout, "[SUMMA3D]\tReduction time: %lf\n", max_Fiber_reduction);
-
+    if(myrank == 0) fprintf(stderr, "[SUMMA3D]\tReduction time: %lf\n", (t1-t0));
 #endif
 #ifdef TIMING
     t0 = MPI_Wtime();
@@ -3728,28 +3684,10 @@ SpParMat3D<IU,NUO,UDERO> Mult_AnXBn_SUMMA3D(SpParMat3D<IU,NU1,UDER1> & A, SpParM
     SpTuples<LIC, NUO> * merged_tuples = MultiwayMergeHash<SR, LIC, NUO>(recvChunks, recvChunks[0]->getnrow(), recvChunks[0]->getncol(), false, false); // Do not delete
 #ifdef TIMING
     t1 = MPI_Wtime();
-    double Merge_fiber_time=(t1-t0);
-    double min_Merge_fiber;
-    double max_Merge_fiber;
-    MPI_Allreduce(&Merge_fiber_time, &max_Merge_fiber, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-    MPI_Allreduce(&Merge_fiber_time, &min_Merge_fiber, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
-    if(myrank == 0) fprintf(stdout, "[SUMMA3D]\tMerge_fiber_time: %lf\n", max_Merge_fiber);
-#endif
-
-#ifdef TIMING
-    t0 = MPI_Wtime();
+    if(myrank == 0) fprintf(stderr, "[SUMMA3D]\tMerge_fiber_time: %lf\n", (t1-t0));
 #endif
     //Create SpDCCol and delete merged_tuples;
     UDERO * localResultant = new UDERO(*merged_tuples, false);
-#ifdef TIMING
-    t1 = MPI_Wtime();
-    double Build_spdccol_time=(t1-t0);
-    double min_Build_spdccol;
-    double max_Build_spdccol;
-    MPI_Allreduce(&Build_spdccol_time, &max_Build_spdccol, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-    MPI_Allreduce(&Build_spdccol_time, &min_Build_spdccol, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
-    if(myrank == 0) fprintf(stdout, "[SUMMA3D]\tBuild_spdccol_time: %lf\n", max_Build_spdccol);
-#endif
     delete merged_tuples;
 
     // Do not delete elements of recvChunks, because that would give segmentation fault due to double free
@@ -4274,4 +4212,3 @@ SpParMat3D<IU, NUO, UDERO> MemEfficientSpGEMM3D(SpParMat3D<IU, NU1, UDERA> & A, 
 
 
 #endif
-

@@ -17,14 +17,18 @@ TARGET_LINK_LIBRARIES( msbfs CombBLAS )
 TARGET_LINK_LIBRARIES( msbfs-3d CombBLAS )
 
 
-# Following portions taken from $PETSC_DIR/share/petsc/CMakeLists.txt
-# Resource refered from: https://petsc.org/main/manual/getting_started/#sec-writing-application-codes
-set(PETSC $ENV{PETSC_DIR}/$ENV{PETSC_ARCH})
-set(ENV{PKG_CONFIG_PATH} ${PETSC}/lib/pkgconfig)
+option(BUILD_PETSC_TARGETS "Build PETSc benchmark targets" OFF)
 
-add_executable(petsc_test petsc_test.c)
+if(BUILD_PETSC_TARGETS)
+    # Following portions taken from $PETSC_DIR/share/petsc/CMakeLists.txt
+    # Resource refered from: https://petsc.org/main/manual/getting_started/#sec-writing-application-codes
+    set(PETSC $ENV{PETSC_DIR}/$ENV{PETSC_ARCH})
+    set(ENV{PKG_CONFIG_PATH} ${PETSC}/lib/pkgconfig)
 
-find_package(PkgConfig REQUIRED)
-pkg_search_module(PETSC REQUIRED IMPORTED_TARGET PETSc)
-# Linking with CombBLAS to avoid error due to not finding OpenMP
-target_link_libraries(petsc_test PkgConfig::PETSC CombBLAS)
+    find_package(PkgConfig REQUIRED)
+    pkg_search_module(PETSC REQUIRED IMPORTED_TARGET PETSc)
+
+    add_executable(petsc_test petsc_test.c)
+    # Linking with CombBLAS to avoid error due to not finding OpenMP
+    target_link_libraries(petsc_test PkgConfig::PETSC CombBLAS)
+endif()
