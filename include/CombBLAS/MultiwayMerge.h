@@ -260,7 +260,7 @@ void SerialMerge( const std::vector<SpTuples<IT,NT> *> & ArrSpTups, std::tuple<I
         std::vector<IT> curptr(nlists, static_cast<IT>(0));
         const IT minHashTableSize = 16;
         const IT hashScale = 107;
-        std::vector<NT> globalHashVec(minHashTableSize);
+        std::vector<IT> globalHashVec(minHashTableSize);
         
         
         
@@ -853,7 +853,7 @@ SpTuples<IT, NT>* MultiwayMerge( std::vector<SpTuples<IT,NT> *> & ArrSpTups, IT 
 #pragma omp parallel
 #endif
         {
-            std::vector<NT> globalHashVec(minHashTableSize);
+            std::vector<IT> globalHashVec(minHashTableSize);
             size_t tid = omp_get_thread_num();
 #ifdef THREADED
 #pragma omp for schedule(dynamic)

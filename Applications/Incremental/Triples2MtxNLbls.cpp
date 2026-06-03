@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <vector>
 #include <sstream>
+#include <map>
 #include "CombBLAS/CombBLAS.h"
 #include "CombBLAS/CommGrid3D.h"
 #include "CombBLAS/SpParMat3D.h"
@@ -40,6 +41,70 @@ typedef PlusTimesSRing<double, double> PTFF;
 typedef PlusTimesSRing<bool, double> PTBOOLNT;
 typedef PlusTimesSRing<double, bool> PTNTBOOL;
 typedef std::array<char, MAXVERTNAME> LBL;
+struct LblWriteHandler {
+    LBL load(std::istream&, IT) { return LBL{}; }
+    void save(std::ostream& os, const LBL& v, IT) {
+        auto end = std::find(v.begin(), v.end(), '\0');
+        os.write(v.data(), end - v.begin());
+    }
+};
+
+typedef std::pair<LBL, IT> TYPE2SEND;
+typedef std::map<std::string, IT> KEYMAP;
+typedef std::tuple<LBL, IT, IT, IT> TUPLE2SEND;
+
+void SendLblNIdxToOwner(
+    FullyDistVec<IT, LBL>& distVec,
+    std::vector<int>& sendcnt, std::vector<int>& recvcnt,
+    std::vector<int>& sdispls, std::vector<int>& rdispls,
+    IT& totsend, IT& totrecv,
+    std::vector<TYPE2SEND>& senddata, std::vector<TYPE2SEND>& recvdata)
+{
+    int nprocs;
+    MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
+
+    IT loclen = distVec.LocArrSize();
+    IT lengthUntil = distVec.LengthUntil();
+    const LBL* locArr = distVec.GetLocArr();
+
+    std::fill(sendcnt.begin(), sendcnt.end(), 0);
+    for (IT i = 0; i < loclen; i++) {
+        auto lblEnd = std::find(locArr[i].begin(), locArr[i].end(), '\0');
+        std::string lblStr(locArr[i].begin(), lblEnd);
+        int owner = (int)(std::hash<std::string>{}(lblStr) % nprocs);
+        sendcnt[owner]++;
+    }
+
+    sdispls[0] = 0;
+    for (int i = 1; i <= nprocs; i++)
+        sdispls[i] = sdispls[i-1] + sendcnt[i-1];
+    totsend = sdispls[nprocs];
+
+    MPI_Alltoall(sendcnt.data(), 1, MPI_INT, recvcnt.data(), 1, MPI_INT, MPI_COMM_WORLD);
+
+    rdispls[0] = 0;
+    for (int i = 1; i <= nprocs; i++)
+        rdispls[i] = rdispls[i-1] + recvcnt[i-1];
+    totrecv = rdispls[nprocs];
+
+    senddata.resize(totsend);
+    std::vector<int> sendpos(nprocs, 0);
+    for (IT i = 0; i < loclen; i++) {
+        auto lblEnd = std::find(locArr[i].begin(), locArr[i].end(), '\0');
+        std::string lblStr(locArr[i].begin(), lblEnd);
+        int owner = (int)(std::hash<std::string>{}(lblStr) % nprocs);
+        senddata[sdispls[owner] + sendpos[owner]++] = TYPE2SEND(locArr[i], lengthUntil + i);
+    }
+
+    recvdata.resize(totrecv);
+    MPI_Datatype MPI_T2S;
+    MPI_Type_contiguous(sizeof(TYPE2SEND), MPI_CHAR, &MPI_T2S);
+    MPI_Type_commit(&MPI_T2S);
+    MPI_Alltoallv(senddata.data(), sendcnt.data(), sdispls.data(), MPI_T2S,
+                  recvdata.data(), recvcnt.data(), rdispls.data(), MPI_T2S,
+                  MPI_COMM_WORLD);
+    MPI_Type_free(&MPI_T2S);
+}
 
 int main(int argc, char* argv[])
 {
@@ -58,20 +123,20 @@ int main(int argc, char* argv[])
     return -1;
   }
   else {
-    string TriplesName;
-    string MtxName;
-    string LblName;
+    string TriplesM11, TriplesM22, TriplesM21;
+    string MtxM11, MtxM12, MtxM21, MtxM22;
+    string LblM11, LblM22;
     for (int i = 1; i < argc; i++)
     {
-        if (strcmp(argv[i],"--triples")==0){
-            TriplesM11 = string(argv[i+1]);
-        }
-        if (strcmp(argv[i],"--mtx")==0){
-            MtxM11 = string(argv[i+1]);
-        }
-        if (strcmp(argv[i],"--lbl")==0){
-            LblM11 = string(argv[i+1]);
-        }
+        if (strcmp(argv[i],"--triples11")==0)  TriplesM11 = string(argv[i+1]);
+        if (strcmp(argv[i],"--triples22")==0)  TriplesM22 = string(argv[i+1]);
+        if (strcmp(argv[i],"--triples21")==0)  TriplesM21 = string(argv[i+1]);
+        if (strcmp(argv[i],"--mtxout11")==0)   MtxM11     = string(argv[i+1]);
+        if (strcmp(argv[i],"--mtxout12")==0)   MtxM12     = string(argv[i+1]);
+        if (strcmp(argv[i],"--mtxout21")==0)   MtxM21     = string(argv[i+1]);
+        if (strcmp(argv[i],"--mtxout22")==0)   MtxM22     = string(argv[i+1]);
+        if (strcmp(argv[i],"--lblout11")==0)   LblM11     = string(argv[i+1]);
+        if (strcmp(argv[i],"--lblout22")==0)   LblM22     = string(argv[i+1]);
     }
     shared_ptr<CommGrid> fullWorld;
     fullWorld.reset( new CommGrid(MPI_COMM_WORLD, 0, 0) );
@@ -286,8 +351,8 @@ int main(int argc, char* argv[])
     M12.ParallelWriteMM(MtxM12, 1);
     M21.ParallelWriteMM(MtxM21, 1);
     M22.ParallelWriteMM(MtxM22, 1);
-    gM11Lbl.ParallelWrite(LblM11, 1);
-    gM23Lbl.ParallelWrite(LblM22, 1);
+    gM11Lbl.ParallelWrite(LblM11, 1, LblWriteHandler{});
+    gM23Lbl.ParallelWrite(LblM22, 1, LblWriteHandler{});
 
   }
 
